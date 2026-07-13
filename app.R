@@ -186,12 +186,14 @@ explanation_cont <- paste(
 #
 # A large background "pool" of genotypes + noise is drawn once per seed and
 # reused as sliders move, so the scatter morphs smoothly rather than
-# re-randomizing (same rationale as simulate_latent() above). Its size must
-# comfortably exceed the number of cases needed even for a low prevalence
-# and a strongly case-enriched sample.
+# re-randomizing (same rationale as simulate_latent() above). Bigger is
+# better for guaranteeing enough cases at low prevalence + high sample size
+# + P near 1, but it's kept modest (rather than e.g. 2e7) to fit shinyapps.io
+# memory limits - build_snp_stats() degrades gracefully (returns fewer rows
+# than requested) rather than erroring if the pool runs short.
 # ---------------------------------------------------------------------------
 
-SNP_POOL_SIZE <- 2e7
+SNP_POOL_SIZE <- 2e6
 
 simulate_disease_pool <- function(pool_size, maf1, maf2, seed) {
   set.seed(seed)
