@@ -1,29 +1,102 @@
 # Collider Bias Explorer
 #
 # An interactive demo of collider bias (Berkson's paradox): a sample gets
-# selected based on a third variable S (the "collider") that is itself
-# caused by / correlated with two other variables X and Y. Conditioning on
-# S can induce a spurious correlation between X and Y, even when none
-# exists in the full population.
-#
-# Classic example: X = intelligence, Y = creativity, S = becoming a
-# professional chess player. Intelligence and creativity may be uncorrelated
-# in the general population, but if both raise your odds of becoming a
-# professional chess player, then among professional chess players
-# intelligence and creativity can appear negatively correlated.
+# selected based on a third variable that is itself caused by / correlated
+# with two other variables X and Y. Conditioning on that third variable can
+# induce a spurious correlation between X and Y, even when none exists in
+# the full population.
 #
 # Two tabs:
-#   - Continuous variables: two (possibly correlated) continuous traits X, Y
-#   - Genetic (SNPs): two correlated SNP dosages (0/1/2), i.e. two variants
-#     in LD, with S representing e.g. a disease liability / risk score that
-#     depends on both SNPs, illustrating how case ascertainment can distort
-#     apparent SNP-SNP correlation
+#   - Continuous variables: X and Y are correlated with a general selection
+#     variable S (e.g. X = intelligence, Y = creativity, S = becoming a
+#     professional chess player).
+#   - Genetic (SNPs): X and Y are two LD-independent SNPs that each explain
+#     some variance in the liability of a disease (e.g. Alzheimer's) under
+#     the liability-threshold model. The disease (case status) is the
+#     collider: ascertaining a case-enriched sample induces a spurious
+#     SNP-SNP correlation even though the SNPs are independent in the
+#     population.
 
 library(shiny)
 library(ggplot2)
 
 # ---------------------------------------------------------------------------
-# Simulation helpers
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+# Simple lm fit summary, guarding against degenerate subsets.
+fit_line <- function(data) {
+  if (nrow(data) < 3 || sd(data$x) == 0 || sd(data$y) == 0) {
+    return(list(intercept = NA_real_, slope = NA_real_, r = NA_real_, n = nrow(data)))
+  }
+  m <- lm(y ~ x, data = data)
+  list(intercept = unname(coef(m)[1]),
+       slope = unname(coef(m)[2]),
+       r = cor(data$x, data$y),
+       n = nrow(data))
+}
+
+fmt_r <- function(fit) if (is.na(fit$r)) "NA" else sprintf("%.2f", fit$r)
+
+COLS <- c("Not selected" = "grey70", "Selected" = "#D7191C")
+
+# Build the scatter + two regression lines (population vs. selected).
+# `jitter` is used for the SNP tab where x/y only take values 0/1/2.
+# `df$group` must be a 2-level factor; the 2nd level is drawn in red.
+make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
+                       cols = COLS, legend_title = "Selection status") {
+  df <- stats$df
+  pop_fit <- stats$pop_fit
+  sel_fit <- stats$sel_fit
+  sel_colour <- unname(cols[levels(df$group)[2]])
+
+  p <- ggplot(df, aes(x = x, y = y))
+
+  if (jitter) {
+    p <- p + geom_jitter(aes(colour = group), width = 0.12, height = 0.12,
+                          alpha = 0.55, size = 1.8)
+  } else {
+    p <- p + geom_point(aes(colour = group), alpha = 0.45, size = 1.6)
+  }
+
+  p <- p +
+    (if (!is.na(pop_fit$slope))
+      geom_abline(intercept = pop_fit$intercept, slope = pop_fit$slope,
+                  colour = "black", linetype = "dashed", linewidth = 1)
+     else NULL) +
+    (if (!is.na(sel_fit$slope))
+      geom_abline(intercept = sel_fit$intercept, slope = sel_fit$slope,
+                  colour = sel_colour, linewidth = 1.1)
+     else NULL) +
+    scale_colour_manual(values = cols, name = legend_title, drop = FALSE) +
+    labs(x = xlab, y = ylab) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom")
+
+  p
+}
+
+# HTML summary of the two correlations, colour-matched to the plot legend,
+# shown below the plot (avoids clipping that a ggplot subtitle suffers at
+# typical plot widths).
+make_stats_html <- function(stats, labels = c("Full population", "Selected sample"),
+                             cols = COLS) {
+  sel_colour <- unname(cols[levels(stats$df$group)[2]])
+  line <- function(label, fit, colour) {
+    sprintf(
+      '<span style="color:%s; font-weight:600;">%s</span>: r = %s (n = %d)',
+      colour, label, fmt_r(fit), fit$n
+    )
+  }
+  HTML(paste(
+    line(labels[1], stats$pop_fit, "black"),
+    line(labels[2], stats$sel_fit, sel_colour),
+    sep = "&nbsp;&nbsp;|&nbsp;&nbsp;"
+  ))
+}
+
+# ---------------------------------------------------------------------------
+# Continuous-variables tab: simulation
 # ---------------------------------------------------------------------------
 
 # Correlated pair of standard normals. Using a fixed seed keyed only on `n`
@@ -67,23 +140,9 @@ simulate_continuous <- function(n, rho, rho_xs, rho_ys, seed) {
   add_selection_var(latent, rho, rho_xs, rho_ys)
 }
 
-# Two SNP dosages (0/1/2) with correlation (LD) rho, via a Gaussian copula:
-# correlated liabilities -> uniform ranks -> binomial genotype at each MAF.
-# The selection variable S is computed on the underlying liability scale
-# (e.g. a disease risk score), then attached to the dosage data.
-simulate_snps <- function(n, rho, maf1, maf2, rho_xs, rho_ys, seed) {
-  latent <- simulate_latent(n, rho, seed)
-  latent <- add_selection_var(latent, rho, rho_xs, rho_ys)
-  u1 <- pnorm(latent$x)
-  u2 <- pnorm(latent$y)
-  g1 <- qbinom(u1, 2, maf1)
-  g2 <- qbinom(u2, 2, maf2)
-  data.frame(x = g1, y = g2, s = latent$s)
-}
-
 # Classify points by selection status based on the selection variable S:
 # top select_pct% of S (marginally) are "Selected" (e.g. became a
-# professional chess player / a case). Lower % = more stringent selection.
+# professional chess player). Lower % = more stringent selection.
 classify_selection <- function(df, select_pct) {
   thr_s <- quantile(df$s, probs = 1 - select_pct / 100, type = 1, names = FALSE)
   df$group <- factor(ifelse(df$s >= thr_s, "Selected", "Not selected"),
@@ -91,23 +150,6 @@ classify_selection <- function(df, select_pct) {
   attr(df, "thr_s") <- thr_s
   df
 }
-
-# Simple lm fit summary, guarding against degenerate subsets.
-fit_line <- function(data) {
-  if (nrow(data) < 3 || sd(data$x) == 0 || sd(data$y) == 0) {
-    return(list(intercept = NA_real_, slope = NA_real_, r = NA_real_, n = nrow(data)))
-  }
-  m <- lm(y ~ x, data = data)
-  list(intercept = unname(coef(m)[1]),
-       slope = unname(coef(m)[2]),
-       r = cor(data$x, data$y),
-       n = nrow(data))
-}
-
-fmt_r <- function(fit) if (is.na(fit$r)) "NA" else sprintf("%.2f", fit$r)
-
-COLS <- c("Not selected" = "grey70",
-          "Selected" = "#D7191C")
 
 # Classify + fit both regression lines once; shared by the plot and the
 # text summary so the (identical) computation isn't duplicated.
@@ -121,57 +163,7 @@ compute_stats <- function(df, select_pct) {
   )
 }
 
-# Build the scatter + two regression lines. `jitter` is used for the SNP
-# tab where x/y only take values 0/1/2.
-make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y") {
-  df <- stats$df
-  pop_fit <- stats$pop_fit
-  sel_fit <- stats$sel_fit
-
-  p <- ggplot(df, aes(x = x, y = y))
-
-  if (jitter) {
-    p <- p + geom_jitter(aes(colour = group), width = 0.12, height = 0.12,
-                          alpha = 0.55, size = 1.8)
-  } else {
-    p <- p + geom_point(aes(colour = group), alpha = 0.45, size = 1.6)
-  }
-
-  p <- p +
-    (if (!is.na(pop_fit$slope))
-      geom_abline(intercept = pop_fit$intercept, slope = pop_fit$slope,
-                  colour = "black", linetype = "dashed", linewidth = 1)
-     else NULL) +
-    (if (!is.na(sel_fit$slope))
-      geom_abline(intercept = sel_fit$intercept, slope = sel_fit$slope,
-                  colour = COLS[["Selected"]], linewidth = 1.1)
-     else NULL) +
-    scale_colour_manual(values = COLS, name = "Selection status", drop = FALSE) +
-    labs(x = xlab, y = ylab) +
-    theme_minimal(base_size = 13) +
-    theme(legend.position = "bottom")
-
-  p
-}
-
-# HTML summary of the two correlations, colour-matched to the plot legend,
-# shown below the plot (avoids clipping that a ggplot subtitle suffers at
-# typical plot widths).
-make_stats_html <- function(stats) {
-  line <- function(label, fit, colour) {
-    sprintf(
-      '<span style="color:%s; font-weight:600;">%s</span>: r = %s (n = %d)',
-      colour, label, fmt_r(fit), fit$n
-    )
-  }
-  HTML(paste(
-    line("Full population", stats$pop_fit, "black"),
-    line("Selected sample", stats$sel_fit, COLS[["Selected"]]),
-    sep = "&nbsp;&nbsp;|&nbsp;&nbsp;"
-  ))
-}
-
-explanation <- paste(
+explanation_cont <- paste(
   "Collider bias (Berkson's paradox): X and Y are simulated with a fixed,",
   "known correlation in the full population (black dashed line). A third",
   "variable S - the selection variable - is correlated with X and with Y",
@@ -183,6 +175,137 @@ explanation <- paste(
 )
 
 # ---------------------------------------------------------------------------
+# Genetic (SNPs) tab: simulation
+#
+# X (SNP1) and Y (SNP2) are independent (no LD) in the population. Each
+# influences a binary disease via an underlying, standard-normal liability
+# (Falconer's liability-threshold model): liability = b1*SNP1 + b2*SNP2 +
+# environmental noise, with b_i chosen so SNP_i alone explains r2_i of the
+# liability variance. Individuals with liability above a threshold t (set
+# by the population prevalence K) are cases.
+#
+# A large background "pool" of genotypes + noise is drawn once per seed and
+# reused as sliders move, so the scatter morphs smoothly rather than
+# re-randomizing (same rationale as simulate_latent() above). Its size must
+# comfortably exceed the number of cases needed even for a low prevalence
+# and a strongly case-enriched sample.
+# ---------------------------------------------------------------------------
+
+SNP_POOL_SIZE <- 2e6
+
+simulate_disease_pool <- function(pool_size, maf1, maf2, seed) {
+  set.seed(seed)
+  data.frame(
+    x = rbinom(pool_size, 2, maf1),
+    y = rbinom(pool_size, 2, maf2),
+    e = rnorm(pool_size)
+  )
+}
+
+# Attach a liability column, given each SNP's target R^2 on the liability
+# scale. If r2_1 + r2_2 would leave no residual variance, they're rescaled
+# down proportionally so the liability keeps unit variance.
+add_liability <- function(pool, maf1, maf2, r2_1, r2_2) {
+  total <- r2_1 + r2_2
+  if (total > 0.98) {
+    scale <- 0.98 / total
+    r2_1 <- r2_1 * scale
+    r2_2 <- r2_2 * scale
+  }
+  beta1 <- sqrt(r2_1)
+  beta2 <- sqrt(r2_2)
+  resid_sd <- sqrt(max(1 - r2_1 - r2_2, 0.001))
+  mu1 <- 2 * maf1; sd1 <- sqrt(2 * maf1 * (1 - maf1))
+  mu2 <- 2 * maf2; sd2 <- sqrt(2 * maf2 * (1 - maf2))
+  g1_std <- (pool$x - mu1) / sd1
+  g2_std <- (pool$y - mu2) / sd2
+  pool$liability <- beta1 * g1_std + beta2 * g2_std + resid_sd * pool$e
+  pool
+}
+
+# Build the two groups shown in the plot:
+#   - "Population": n individuals drawn at random (disease at its natural
+#     population prevalence K, no ascertainment).
+#   - "Selected": a case-control sample of n individuals ascertained to a
+#     target case fraction P (the "sample prevalence"). P = K reproduces
+#     the population (no selection); P towards 1 approaches a cases-only
+#     sample (maximal selection on case status).
+build_snp_stats <- function(pool, n, K, P) {
+  t <- -qnorm(K)
+  pool$case <- pool$liability > t
+
+  pop_df <- pool[seq_len(min(n, nrow(pool))), c("x", "y")]
+
+  n_cases_target <- round(n * P)
+  n_controls_target <- n - n_cases_target
+  cases_pool <- pool[pool$case, c("x", "y"), drop = FALSE]
+  controls_pool <- pool[!pool$case, c("x", "y"), drop = FALSE]
+  n_cases <- min(n_cases_target, nrow(cases_pool))
+  n_controls <- min(n_controls_target, nrow(controls_pool))
+  sel_df <- rbind(
+    cases_pool[seq_len(n_cases), , drop = FALSE],
+    controls_pool[seq_len(n_controls), , drop = FALSE]
+  )
+
+  pop_df$group <- "Not selected"
+  sel_df$group <- "Selected"
+  df <- rbind(pop_df, sel_df)
+  df$group <- factor(df$group, levels = c("Not selected", "Selected"))
+
+  list(
+    df = df,
+    pop_fit = fit_line(pop_df),
+    sel_fit = fit_line(sel_df),
+    n_cases = n_cases,
+    n_controls = n_controls
+  )
+}
+
+# --- Liability-scale <-> observed-scale R^2 conversion (Lee et al. 2012,
+# Genet Epidemiology), used purely for the informational display below the
+# plot: it shows how case-control ascertainment inflates the *apparent*
+# per-SNP effect size relative to its true, ascertainment-invariant
+# liability-scale R^2.
+prs_r2liab_to_r2obs <- function(K, P, prs_r2liab) {
+  t <- -qnorm(K, mean = 0, sd = 1)
+  z <- dnorm(t)
+  i1 <- z / K
+  i0 <- -z / (1 - K)
+
+  theta <- i1 * (P - K) / (1 - K) * (i1 * (P - K) / (1 - K) - t)
+  cv <- K * (1 - K) / z^2 * K * (1 - K) / (P * (1 - P))
+
+  prs_r2liab / (cv - prs_r2liab * theta * cv)
+}
+
+make_r2_html <- function(K, P, r2_1, r2_2) {
+  obs1 <- prs_r2liab_to_r2obs(K, P, r2_1)
+  obs2 <- prs_r2liab_to_r2obs(K, P, r2_2)
+  sprintf(
+    paste0(
+      "SNP1: R²(liability) = %.2f → R²(observed in this sample) ≈ %.2f",
+      "&nbsp;&nbsp;|&nbsp;&nbsp;",
+      "SNP2: R²(liability) = %.2f → R²(observed in this sample) ≈ %.2f"
+    ),
+    r2_1, obs1, r2_2, obs2
+  )
+}
+
+explanation_snp <- paste(
+  "Here X (SNP1) and Y (SNP2) are dosages (0/1/2 risk alleles) for two",
+  "genetic variants that are independent in the population (no LD) but",
+  "that each explain some variance in the liability of a disease (e.g.",
+  "Alzheimer's), following the liability-threshold model. The disease is",
+  "the collider: population prevalence (K) sets the true disease rate,",
+  "while sample prevalence (P) sets how case-enriched your study sample",
+  "is. P = K means no ascertainment (matches the population, black dashed",
+  "line); P near 1 approaches a cases-only sample. As P rises above K, a",
+  "spurious correlation between SNP1 and SNP2 can appear in the selected",
+  "sample (red points/line) even though the SNPs are independent in the",
+  "population."
+)
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 
@@ -190,7 +313,7 @@ continuous_tab <- tabPanel(
   "Continuous variables",
   sidebarLayout(
     sidebarPanel(
-      helpText(explanation),
+      helpText(explanation_cont),
       sliderInput("rho_cont", "True correlation between X and Y",
                   min = -0.9, max = 0.9, value = 0, step = 0.05),
       sliderInput("rho_xs_cont", "Correlation between X and the selection variable",
@@ -216,35 +339,29 @@ snp_tab <- tabPanel(
   "Genetic (SNPs)",
   sidebarLayout(
     sidebarPanel(
-      helpText(explanation),
-      helpText(paste(
-        "Here X and Y are dosages (0/1/2 copies of the risk allele) for two",
-        "SNPs, and the selection variable represents e.g. a disease",
-        "liability or polygenic risk score that depends on both SNPs.",
-        "Ascertaining a cohort (e.g. cases) based on that score can distort",
-        "the apparent SNP-SNP correlation (LD) even if the true LD is weak."
-      )),
-      sliderInput("rho_snp", "LD (correlation) between SNP1 and SNP2",
-                  min = -0.9, max = 0.9, value = 0, step = 0.05),
+      helpText(explanation_snp),
       sliderInput("maf1", "SNP1 risk allele frequency",
                   min = 0.05, max = 0.5, value = 0.3, step = 0.05),
       sliderInput("maf2", "SNP2 risk allele frequency",
                   min = 0.05, max = 0.5, value = 0.3, step = 0.05),
-      sliderInput("rho_xs_snp", "Correlation between SNP1 and the selection variable",
-                  min = -0.9, max = 0.9, value = 0.6, step = 0.05),
-      sliderInput("rho_ys_snp", "Correlation between SNP2 and the selection variable",
-                  min = -0.9, max = 0.9, value = 0.6, step = 0.05),
-      sliderInput("select_pct_snp",
-                  "Selection strength (top % selected on the selection variable)",
-                  min = 1, max = 50, value = 10, step = 1),
-      helpText("Lower % = more stringent (stronger) selection."),
-      sliderInput("n_snp", "Sample size", min = 500, max = 5000,
+      sliderInput("r2_1", "SNP1: variance explained in disease liability (R²)",
+                  min = 0, max = 0.4, value = 0.25, step = 0.01),
+      sliderInput("r2_2", "SNP2: variance explained in disease liability (R²)",
+                  min = 0, max = 0.4, value = 0.25, step = 0.01),
+      sliderInput("K_snp", "Population disease prevalence (K)",
+                  min = 0.01, max = 0.5, value = 0.1, step = 0.01),
+      sliderInput("P_snp",
+                  "Sample disease prevalence (P) — case fraction in the selected sample",
+                  min = 0.05, max = 0.95, value = 0.9, step = 0.05),
+      helpText("P close to K = little/no selection. P close to 1 = a cases-only sample."),
+      sliderInput("n_snp", "Sample size (per group)", min = 500, max = 5000,
                   value = 2000, step = 500),
       actionButton("resample_snp", "Draw new random sample")
     ),
     mainPanel(
       plotOutput("plot_snp", height = "550px"),
-      div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_snp"))
+      div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_snp")),
+      div(style = "margin-top: 6px; font-size: 13px; color: #555;", htmlOutput("r2_snp"))
     )
   )
 )
@@ -273,10 +390,19 @@ server <- function(input, output, session) {
     compute_stats(df, input$select_pct_cont)
   })
 
+  # Redrawn only when genotype-generating inputs (MAF) or the seed change;
+  # liability/threshold/ascertainment are derived from this pool on the fly
+  # as the R^2/prevalence sliders move, so the scatter morphs smoothly.
+  snp_pool <- reactive({
+    simulate_disease_pool(SNP_POOL_SIZE, input$maf1, input$maf2, seed_snp())
+  })
+
+  snp_pool_liab <- reactive({
+    add_liability(snp_pool(), input$maf1, input$maf2, input$r2_1, input$r2_2)
+  })
+
   stats_snp <- reactive({
-    df <- simulate_snps(input$n_snp, input$rho_snp, input$maf1, input$maf2,
-                         input$rho_xs_snp, input$rho_ys_snp, seed_snp())
-    compute_stats(df, input$select_pct_snp)
+    build_snp_stats(snp_pool_liab(), input$n_snp, input$K_snp, input$P_snp)
   })
 
   output$plot_cont <- renderPlot({
@@ -294,7 +420,15 @@ server <- function(input, output, session) {
   }, width = 800, height = 550)
 
   output$stats_snp <- renderUI({
-    make_stats_html(stats_snp())
+    stats <- stats_snp()
+    make_stats_html(stats, labels = c(
+      "Population",
+      sprintf("Selected sample (n cases = %d, n controls = %d)", stats$n_cases, stats$n_controls)
+    ))
+  })
+
+  output$r2_snp <- renderUI({
+    HTML(make_r2_html(input$K_snp, input$P_snp, input$r2_1, input$r2_2))
   })
 }
 
