@@ -55,8 +55,10 @@ Adjustable:
 - Sample size
 
 The panel below the plot also shows, for each SNP, how its true
-liability-scale R² translates into an inflated *observed*-scale R² under
-the current ascertainment, using the liability-scale conversion of
+liability-scale R² translates into an *observed*-scale R² under the
+current ascertainment (which can come out higher or lower than the
+liability-scale value, depending on K and P), using the liability-scale
+conversion of
 [Lee et al. 2012, *Genetic Epidemiology*](https://doi.org/10.1002/gepi.21614).
 
 ## Running locally

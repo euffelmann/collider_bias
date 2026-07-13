@@ -267,9 +267,10 @@ build_snp_stats <- function(pool, n, K, P) {
 
 # --- Liability-scale <-> observed-scale R^2 conversion (Lee et al. 2012,
 # Genet Epidemiology), used purely for the informational display below the
-# plot: it shows how case-control ascertainment inflates the *apparent*
+# plot: it shows how case-control ascertainment distorts the *apparent*
 # per-SNP effect size relative to its true, ascertainment-invariant
-# liability-scale R^2.
+# liability-scale R^2 - the observed-scale value can come out higher or
+# lower than the liability-scale one, depending on K and P.
 prs_r2liab_to_r2obs <- function(K, P, prs_r2liab) {
   t <- -qnorm(K, mean = 0, sd = 1)
   z <- dnorm(t)
