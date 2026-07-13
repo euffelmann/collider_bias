@@ -26,9 +26,9 @@ can create a correlation between X and Y that doesn't exist in the
 population, and can even flip its sign, purely because S depends on both.
 
 Adjustable:
-- True correlation between IQ and chess skill
-- Correlation between IQ and S, and between chess skill and S
-- Selection strength (top % who become grandmasters)
+- True correlation between X and Y
+- Correlation between X and S, and between Y and S
+- Selection strength (top % selected on S)
 - Sample size
 
 ### Genetic (SNPs)

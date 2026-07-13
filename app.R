@@ -328,14 +328,14 @@ continuous_tab <- tabPanel(
   sidebarLayout(
     sidebarPanel(
       helpText(explanation_cont),
-      sliderInput("rho_cont", "True correlation between IQ (X) and chess skill (Y)",
+      sliderInput("rho_cont", "True correlation between X and Y",
                   min = -0.9, max = 0.9, value = 0, step = 0.05),
-      sliderInput("rho_xs_cont", "Correlation between IQ and becoming a chess grandmaster",
+      sliderInput("rho_xs_cont", "Correlation between X and the selection variable",
                   min = -0.9, max = 0.9, value = 0.6, step = 0.05),
-      sliderInput("rho_ys_cont", "Correlation between chess skill and becoming a chess grandmaster",
+      sliderInput("rho_ys_cont", "Correlation between Y and the selection variable",
                   min = -0.9, max = 0.9, value = 0.6, step = 0.05),
       sliderInput("select_pct_cont",
-                  "Selection strength (top % who become grandmasters)",
+                  "Selection strength (top % selected on the selection variable)",
                   min = 1, max = 50, value = 10, step = 1),
       helpText("Lower % = more stringent (stronger) selection."),
       sliderInput("n_cont", "Sample size", min = 500, max = 5000,
@@ -430,11 +430,11 @@ server <- function(input, output, session) {
   })
 
   output$plot_cont <- renderPlot({
-    make_plot(stats_cont(), jitter = FALSE, xlab = "IQ", ylab = "Chess skill")
+    make_plot(stats_cont(), jitter = FALSE, xlab = "Variable X", ylab = "Variable Y")
   }, width = 800, height = 550)
 
   output$stats_cont <- renderUI({
-    make_stats_html(stats_cont(), labels = c("Full population", "Chess grandmasters"))
+    make_stats_html(stats_cont())
   })
 
   output$plot_snp <- renderPlot({
