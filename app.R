@@ -24,19 +24,33 @@ library(ggplot2)
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-# Simple lm fit summary, guarding against degenerate subsets.
+# Simple lm fit summary, guarding against degenerate subsets. The p-value
+# tests the correlation against zero (equivalently, the slope against
+# zero); it's computed directly from r rather than via cor.test() so the
+# NA-guarding logic only lives in one place.
 fit_line <- function(data) {
   if (nrow(data) < 3 || sd(data$x) == 0 || sd(data$y) == 0) {
-    return(list(intercept = NA_real_, slope = NA_real_, r = NA_real_, n = nrow(data)))
+    return(list(intercept = NA_real_, slope = NA_real_, r = NA_real_,
+                p = NA_real_, n = nrow(data)))
   }
   m <- lm(y ~ x, data = data)
+  n <- nrow(data)
+  r <- cor(data$x, data$y)
+  t_stat <- r * sqrt(n - 2) / sqrt(1 - r^2)
   list(intercept = unname(coef(m)[1]),
        slope = unname(coef(m)[2]),
-       r = cor(data$x, data$y),
-       n = nrow(data))
+       r = r,
+       p = 2 * pt(-abs(t_stat), df = n - 2),
+       n = n)
 }
 
 fmt_r <- function(fit) if (is.na(fit$r)) "NA" else sprintf("%.2f", fit$r)
+
+fmt_p <- function(fit) {
+  if (is.na(fit$p)) return("NA")
+  if (fit$p < 0.001) return("p < 0.001")
+  sprintf("p = %.3f", fit$p)
+}
 
 COLS <- c("Not selected" = "grey70", "Selected" = "#D7191C")
 
@@ -84,8 +98,8 @@ make_stats_html <- function(stats, labels = c("Full population", "Selected sampl
   sel_colour <- unname(cols[levels(stats$df$group)[2]])
   line <- function(label, fit, colour) {
     sprintf(
-      '<span style="color:%s; font-weight:600;">%s</span>: r = %s (n = %d)',
-      colour, label, fmt_r(fit), fit$n
+      '<span style="color:%s; font-weight:600;">%s</span>: r = %s (n = %d, %s)',
+      colour, label, fmt_r(fit), fit$n, fmt_p(fit)
     )
   }
   HTML(paste(
