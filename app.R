@@ -8,8 +8,8 @@
 #
 # Two tabs:
 #   - Continuous variables: X and Y are correlated with a general selection
-#     variable S (e.g. X = intelligence, Y = creativity, S = becoming a
-#     professional chess player).
+#     variable S (e.g. X = IQ, Y = chess skill, S = becoming a chess
+#     grandmaster).
 #   - Genetic (SNPs): X and Y are two LD-independent SNPs that each explain
 #     some variance in the liability of a disease (e.g. Alzheimer's) under
 #     the liability-threshold model. The disease (case status) is the
@@ -141,8 +141,8 @@ simulate_continuous <- function(n, rho, rho_xs, rho_ys, seed) {
 }
 
 # Classify points by selection status based on the selection variable S:
-# top select_pct% of S (marginally) are "Selected" (e.g. became a
-# professional chess player). Lower % = more stringent selection.
+# top select_pct% of S (marginally) are "Selected" (e.g. became a chess
+# grandmaster). Lower % = more stringent selection.
 classify_selection <- function(df, select_pct) {
   thr_s <- quantile(df$s, probs = 1 - select_pct / 100, type = 1, names = FALSE)
   df$group <- factor(ifelse(df$s >= thr_s, "Selected", "Not selected"),
@@ -167,11 +167,11 @@ explanation_cont <- paste(
   "Collider bias (Berkson's paradox): X and Y are simulated with a fixed,",
   "known correlation in the full population (black dashed line). A third",
   "variable S - the selection variable - is correlated with X and with Y",
-  "by the amounts set below (e.g. X = intelligence, Y = creativity, S =",
-  "becoming a professional chess player). If the sample is restricted to",
-  "those with high S (red points/line), a spurious correlation can appear",
-  "between X and Y even when little or none exists in the population - and",
-  "it can even flip sign - purely because S depends on both."
+  "by the amounts set below (e.g. X = IQ, Y = chess skill, S = becoming a",
+  "chess grandmaster). If the sample is restricted to those with high S",
+  "(red points/line), a spurious correlation can appear between X and Y",
+  "even when little or none exists in the population - and it can even",
+  "flip sign - purely because S depends on both."
 )
 
 # ---------------------------------------------------------------------------
@@ -328,14 +328,14 @@ continuous_tab <- tabPanel(
   sidebarLayout(
     sidebarPanel(
       helpText(explanation_cont),
-      sliderInput("rho_cont", "True correlation between X and Y",
+      sliderInput("rho_cont", "True correlation between IQ (X) and chess skill (Y)",
                   min = -0.9, max = 0.9, value = 0, step = 0.05),
-      sliderInput("rho_xs_cont", "Correlation between X and the selection variable",
+      sliderInput("rho_xs_cont", "Correlation between IQ and becoming a chess grandmaster",
                   min = -0.9, max = 0.9, value = 0.6, step = 0.05),
-      sliderInput("rho_ys_cont", "Correlation between Y and the selection variable",
+      sliderInput("rho_ys_cont", "Correlation between chess skill and becoming a chess grandmaster",
                   min = -0.9, max = 0.9, value = 0.6, step = 0.05),
       sliderInput("select_pct_cont",
-                  "Selection strength (top % selected on the selection variable)",
+                  "Selection strength (top % who become grandmasters)",
                   min = 1, max = 50, value = 10, step = 1),
       helpText("Lower % = more stringent (stronger) selection."),
       sliderInput("n_cont", "Sample size", min = 500, max = 5000,
@@ -430,11 +430,11 @@ server <- function(input, output, session) {
   })
 
   output$plot_cont <- renderPlot({
-    make_plot(stats_cont(), jitter = FALSE, xlab = "Variable X", ylab = "Variable Y")
+    make_plot(stats_cont(), jitter = FALSE, xlab = "IQ", ylab = "Chess skill")
   }, width = 800, height = 550)
 
   output$stats_cont <- renderUI({
-    make_stats_html(stats_cont())
+    make_stats_html(stats_cont(), labels = c("Full population", "Chess grandmasters"))
   })
 
   output$plot_snp <- renderPlot({
