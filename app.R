@@ -191,7 +191,7 @@ explanation_cont <- paste(
 # and a strongly case-enriched sample.
 # ---------------------------------------------------------------------------
 
-SNP_POOL_SIZE <- 2e6
+SNP_POOL_SIZE <- 2e7
 
 simulate_disease_pool <- function(pool_size, maf1, maf2, seed) {
   set.seed(seed)
@@ -203,17 +203,19 @@ simulate_disease_pool <- function(pool_size, maf1, maf2, seed) {
 }
 
 # Attach a liability column, given each SNP's target R^2 on the liability
-# scale. If r2_1 + r2_2 would leave no residual variance, they're rescaled
-# down proportionally so the liability keeps unit variance.
-add_liability <- function(pool, maf1, maf2, r2_1, r2_2) {
+# scale and effect direction (dir_i = +1 risk-increasing, -1 risk-decreasing
+# per copy of the coded/"risk" allele). If r2_1 + r2_2 would leave no
+# residual variance, they're rescaled down proportionally so the liability
+# keeps unit variance.
+add_liability <- function(pool, maf1, maf2, r2_1, r2_2, dir1 = 1, dir2 = 1) {
   total <- r2_1 + r2_2
   if (total > 0.98) {
     scale <- 0.98 / total
     r2_1 <- r2_1 * scale
     r2_2 <- r2_2 * scale
   }
-  beta1 <- sqrt(r2_1)
-  beta2 <- sqrt(r2_2)
+  beta1 <- dir1 * sqrt(r2_1)
+  beta2 <- dir2 * sqrt(r2_2)
   resid_sd <- sqrt(max(1 - r2_1 - r2_2, 0.001))
   mu1 <- 2 * maf1; sd1 <- sqrt(2 * maf1 * (1 - maf1))
   mu2 <- 2 * maf2; sd2 <- sqrt(2 * maf2 * (1 - maf2))
@@ -247,8 +249,8 @@ build_snp_stats <- function(pool, n, K, P) {
     controls_pool[seq_len(n_controls), , drop = FALSE]
   )
 
-  pop_df$group <- "Not selected"
-  sel_df$group <- "Selected"
+  pop_df$group <- rep("Not selected", nrow(pop_df))
+  sel_df$group <- rep("Selected", nrow(sel_df))
   df <- rbind(pop_df, sel_df)
   df$group <- factor(df$group, levels = c("Not selected", "Selected"))
 
@@ -279,6 +281,13 @@ prs_r2liab_to_r2obs <- function(K, P, prs_r2liab) {
 }
 
 make_r2_html <- function(K, P, r2_1, r2_2) {
+  if (P <= 0 || P >= 1) {
+    fmt <- function(label, r2) sprintf("%s: R²(liability) = %.2f", label, r2)
+    return(paste0(
+      fmt("SNP1", r2_1), "&nbsp;&nbsp;|&nbsp;&nbsp;", fmt("SNP2", r2_2),
+      "&nbsp;&nbsp;(R²-observed is undefined for an all-case or all-control sample)"
+    ))
+  }
   obs1 <- prs_r2liab_to_r2obs(K, P, r2_1)
   obs2 <- prs_r2liab_to_r2obs(K, P, r2_2)
   sprintf(
@@ -292,17 +301,20 @@ make_r2_html <- function(K, P, r2_1, r2_2) {
 }
 
 explanation_snp <- paste(
-  "Here X (SNP1) and Y (SNP2) are dosages (0/1/2 risk alleles) for two",
-  "genetic variants that are independent in the population (no LD) but",
-  "that each explain some variance in the liability of a disease (e.g.",
-  "Alzheimer's), following the liability-threshold model. The disease is",
-  "the collider: population prevalence (K) sets the true disease rate,",
-  "while sample prevalence (P) sets how case-enriched your study sample",
-  "is. P = K means no ascertainment (matches the population, black dashed",
-  "line); P near 1 approaches a cases-only sample. As P rises above K, a",
+  "Here X (SNP1) and Y (SNP2) are dosages (0/1/2 copies of the coded",
+  "allele) for two genetic variants that are independent in the population",
+  "(no LD) but that each explain some variance in the liability of a",
+  "disease (e.g. Alzheimer's), following the liability-threshold model.",
+  "Each SNP's coded allele can be set to be risk-increasing or",
+  "risk-decreasing. The disease is the collider: population prevalence (K)",
+  "sets the true disease rate, while sample prevalence (P) sets how",
+  "case-enriched your study sample is. P = K means no ascertainment",
+  "(matches the population, black dashed line); P = 1 is a cases-only",
+  "sample, P = 0 is a controls-only sample. As P moves away from K, a",
   "spurious correlation between SNP1 and SNP2 can appear in the selected",
   "sample (red points/line) even though the SNPs are independent in the",
-  "population."
+  "population - and its sign depends on whether both SNPs' coded alleles",
+  "move risk in the same direction or opposite directions."
 )
 
 # ---------------------------------------------------------------------------
@@ -340,22 +352,31 @@ snp_tab <- tabPanel(
   sidebarLayout(
     sidebarPanel(
       helpText(explanation_snp),
-      sliderInput("maf1", "SNP1 risk allele frequency",
+      sliderInput("maf1", "SNP1 coded allele frequency",
                   min = 0.05, max = 0.5, value = 0.3, step = 0.05),
-      sliderInput("maf2", "SNP2 risk allele frequency",
+      radioButtons("dir1", "SNP1 coded allele effect direction",
+                   choices = c("Risk-increasing" = 1, "Risk-decreasing" = -1),
+                   selected = 1, inline = TRUE),
+      sliderInput("maf2", "SNP2 coded allele frequency",
                   min = 0.05, max = 0.5, value = 0.3, step = 0.05),
+      radioButtons("dir2", "SNP2 coded allele effect direction",
+                   choices = c("Risk-increasing" = 1, "Risk-decreasing" = -1),
+                   selected = 1, inline = TRUE),
       sliderInput("r2_1", "SNP1: variance explained in disease liability (R²)",
-                  min = 0, max = 0.4, value = 0.25, step = 0.01),
+                  min = 0, max = 0.5, value = 0.25, step = 0.01),
       sliderInput("r2_2", "SNP2: variance explained in disease liability (R²)",
-                  min = 0, max = 0.4, value = 0.25, step = 0.01),
+                  min = 0, max = 0.5, value = 0.25, step = 0.01),
       sliderInput("K_snp", "Population disease prevalence (K)",
                   min = 0.01, max = 0.5, value = 0.1, step = 0.01),
       sliderInput("P_snp",
                   "Sample disease prevalence (P) — case fraction in the selected sample",
-                  min = 0.05, max = 0.95, value = 0.9, step = 0.05),
-      helpText("P close to K = little/no selection. P close to 1 = a cases-only sample."),
-      sliderInput("n_snp", "Sample size (per group)", min = 500, max = 5000,
-                  value = 2000, step = 500),
+                  min = 0, max = 1, value = 1, step = 0.05),
+      helpText(paste(
+        "P close to K = little/no selection. P = 1 = a cases-only sample.",
+        "P = 0 = a controls-only sample."
+      )),
+      sliderInput("n_snp", "Sample size (per group)", min = 0, max = 50000,
+                  value = 5000, step = 1000),
       actionButton("resample_snp", "Draw new random sample")
     ),
     mainPanel(
@@ -398,7 +419,8 @@ server <- function(input, output, session) {
   })
 
   snp_pool_liab <- reactive({
-    add_liability(snp_pool(), input$maf1, input$maf2, input$r2_1, input$r2_2)
+    add_liability(snp_pool(), input$maf1, input$maf2, input$r2_1, input$r2_2,
+                  as.numeric(input$dir1), as.numeric(input$dir2))
   })
 
   stats_snp <- reactive({
@@ -415,8 +437,8 @@ server <- function(input, output, session) {
 
   output$plot_snp <- renderPlot({
     make_plot(stats_snp(), jitter = TRUE,
-              xlab = "SNP1 dosage (0/1/2 risk alleles)",
-              ylab = "SNP2 dosage (0/1/2 risk alleles)")
+              xlab = "SNP1 dosage (0/1/2 coded alleles)",
+              ylab = "SNP2 dosage (0/1/2 coded alleles)")
   }, width = 800, height = 550)
 
   output$stats_snp <- renderUI({
