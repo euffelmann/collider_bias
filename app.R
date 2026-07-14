@@ -48,7 +48,7 @@ fmt_r <- function(fit) if (is.na(fit$r)) "NA" else sprintf("%.2f", fit$r)
 
 fmt_p <- function(fit) {
   if (is.na(fit$p)) return("NA")
-  if (fit$p < 0.001) return("p < 0.001")
+  if (fit$p < 0.001) return(sprintf("p = %.1e", fit$p))
   sprintf("p = %.3f", fit$p)
 }
 
