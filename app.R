@@ -8,8 +8,8 @@
 #
 # Two tabs:
 #   - Continuous variables: X and Y are correlated with a general selection
-#     variable S (e.g. X = IQ, Y = chess skill, S = becoming a chess
-#     grandmaster).
+#     variable S (e.g. X = athleticism, Y = intelligence, S = admission to
+#     university).
 #   - Genetic (SNPs): X and Y are two LD-independent SNPs that each explain
 #     some variance in the liability of a disease (e.g. Alzheimer's) under
 #     the liability-threshold model. The disease (case status) is the
@@ -194,8 +194,8 @@ simulate_continuous <- function(n, rho, rho_xs, rho_ys, seed) {
 }
 
 # Classify points by selection status based on the selection variable S:
-# top select_pct% of S (marginally) are "Selected" (e.g. became a chess
-# grandmaster). Lower % = more stringent selection.
+# top select_pct% of S (marginally) are "Selected" (e.g. admitted to
+# university). Lower % = more stringent selection.
 classify_selection <- function(df, select_pct) {
   thr_s <- quantile(df$s, probs = 1 - select_pct / 100, type = 1, names = FALSE)
   df$group <- factor(ifelse(df$s >= thr_s, "Selected", "Not selected"),
@@ -220,8 +220,8 @@ explanation_cont <- paste(
   "Collider bias (Berkson's paradox): X and Y are simulated with a fixed,",
   "known correlation in the full population (black dashed line). A third",
   "variable S - the selection variable - is correlated with X and with Y",
-  "by the amounts set below (e.g. X = IQ, Y = chess skill, S = becoming a",
-  "chess grandmaster). If the sample is restricted to those with high S",
+  "by the amounts set below (e.g. X = athleticism, Y = intelligence, S =",
+  "admission to university). If the sample is restricted to those with high S",
   "(red points/line), a spurious correlation can appear between X and Y",
   "even when little or none exists in the population - and it can even",
   "flip sign - purely because S depends on both."
@@ -562,7 +562,7 @@ server <- function(input, output, session) {
   })
 
   output$plot_cont <- renderPlot({
-    make_plot(stats_cont(), jitter = FALSE, xlab = "Variable X", ylab = "Variable Y")
+    make_plot(stats_cont(), jitter = FALSE, xlab = "Athleticism", ylab = "Intelligence")
   }, width = 800, height = 550)
 
   output$stats_cont <- renderUI({

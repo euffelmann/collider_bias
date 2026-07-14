@@ -20,9 +20,9 @@ and correlation diverge from the black one as selection gets stronger.
 
 X and Y are two continuous traits with an adjustable true correlation. A
 third variable S — the *selection variable* — is generated to have chosen
-correlations with X and with Y (e.g. X = IQ, Y = chess skill, S = becoming
-a chess grandmaster). Restricting the sample to individuals with high S
-can create a correlation between X and Y that doesn't exist in the
+correlations with X and with Y (e.g. X = athleticism, Y = intelligence,
+S = admission to university). Restricting the sample to individuals with
+high S can create a correlation between X and Y that doesn't exist in the
 population, and can even flip its sign, purely because S depends on both.
 
 Adjustable:
