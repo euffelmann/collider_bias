@@ -427,7 +427,7 @@ explanation_snp <- paste(
 
 continuous_tab <- tabPanel(
   "Continuous variables",
-  sidebarLayout(
+  div(class = "sticky-row", sidebarLayout(
     sidebarPanel(
       helpText(explanation_cont),
       sliderInput("rho_cont", "True correlation between X and Y",
@@ -445,15 +445,17 @@ continuous_tab <- tabPanel(
       actionButton("resample_cont", "Draw new random sample")
     ),
     mainPanel(
-      plotOutput("plot_cont", height = "550px"),
-      div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_cont"))
+      div(class = "sticky-panel",
+        plotOutput("plot_cont", height = "550px"),
+        div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_cont"))
+      )
     )
-  )
+  ))
 )
 
 snp_tab <- tabPanel(
   "Genetic (SNPs)",
-  sidebarLayout(
+  div(class = "sticky-row", sidebarLayout(
     sidebarPanel(
       helpText(explanation_snp),
       sliderInput("maf1", "SNP1 coded allele frequency",
@@ -484,33 +486,43 @@ snp_tab <- tabPanel(
       actionButton("resample_snp", "Draw new random sample")
     ),
     mainPanel(
-      tabsetPanel(
-        tabPanel("Heatmap",
-          plotOutput("heatmap_snp", height = "500px"),
-          div(style = "margin-top: 10px; font-size: 13px; color: #555;", paste(
-            "Each cell is P(SNP1, SNP2 | selected): the fraction of the",
-            "selected/ascertained sample (red group) expected to have that",
-            "genotype combination, computed analytically from the",
-            "population's Hardy-Weinberg genotype frequencies and the",
-            "liability-threshold model. When P = K (no ascertainment) this",
-            "matches the independent population frequencies; as P moves",
-            "away from K, it skews toward genotypes over/under-represented",
-            "among cases - this skew is what the SNP1-SNP2 correlation in",
-            "the selected sample (below) is summarizing."
-          ))
+      div(class = "sticky-panel",
+        tabsetPanel(
+          tabPanel("Heatmap",
+            plotOutput("heatmap_snp", height = "500px"),
+            div(style = "margin-top: 10px; font-size: 13px; color: #555;", paste(
+              "Each cell is P(SNP1, SNP2 | selected): the fraction of the",
+              "selected/ascertained sample (red group) expected to have that",
+              "genotype combination, computed analytically from the",
+              "population's Hardy-Weinberg genotype frequencies and the",
+              "liability-threshold model. When P = K (no ascertainment) this",
+              "matches the independent population frequencies; as P moves",
+              "away from K, it skews toward genotypes over/under-represented",
+              "among cases - this skew is what the SNP1-SNP2 correlation in",
+              "the selected sample (below) is summarizing."
+            ))
+          ),
+          tabPanel("Scatter",
+            plotOutput("plot_snp", height = "550px")
+          )
         ),
-        tabPanel("Scatter",
-          plotOutput("plot_snp", height = "550px")
-        )
-      ),
-      div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_snp")),
-      div(style = "margin-top: 6px; font-size: 13px; color: #555;", htmlOutput("r2_snp"))
+        div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_snp")),
+        div(style = "margin-top: 6px; font-size: 13px; color: #555;", htmlOutput("r2_snp"))
+      )
     )
-  )
+  ))
 )
 
 ui <- navbarPage(
   title = "Collider Bias Explorer",
+  header = tags$style(HTML("
+    /* Keep the plot in view while the (long) sidebar scrolls, on screens
+       wide enough for the sidebar/plot to sit side by side. */
+    @media (min-width: 768px) {
+      .sticky-row .row { display: flex; flex-wrap: wrap; }
+      .sticky-panel { position: sticky; top: 15px; align-self: flex-start; }
+    }
+  ")),
   continuous_tab,
   snp_tab
 )
