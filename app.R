@@ -54,6 +54,10 @@ fmt_p <- function(fit) {
 
 COLS <- c("Not selected" = "grey70", "Selected" = "#D7191C")
 
+# Sequential blue ramp (light -> dark) used for the SNP heatmap's fill scale.
+HEATMAP_LOW <- "#cde2fb"
+HEATMAP_HIGH <- "#0d366b"
+
 # Build the scatter + two regression lines (population vs. selected).
 # `jitter` is used for the SNP tab where x/y only take values 0/1/2.
 # `df$group` must be a 2-level factor; the 2nd level is drawn in red.
@@ -96,6 +100,32 @@ make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
   }
 
   p
+}
+
+# 3x3 heatmap of P(selected | SNP1, SNP2): how likely an individual with a
+# given genotype combination is to end up in the ascertained sample (red
+# group in the scatter), rather than a scatter of jittered points. Small,
+# fixed number of cells (genotypes only take 0/1/2), so every cell gets a
+# direct label instead of relying on the fill legend alone.
+make_heatmap_plot <- function(grid) {
+  rng <- range(grid$p_selected)
+  mid <- mean(rng)
+  grid$label_colour <- ifelse(grid$p_selected > mid, "white", "#0b0b0b")
+
+  ggplot(grid, aes(x = factor(x), y = factor(y), fill = p_selected)) +
+    geom_tile(colour = "white", linewidth = 1.5) +
+    geom_text(aes(label = sprintf("%.3f", p_selected), colour = label_colour),
+              size = 5.5, fontface = "bold", show.legend = FALSE) +
+    scale_colour_identity() +
+    scale_fill_gradient(low = HEATMAP_LOW, high = HEATMAP_HIGH,
+                        name = "P(selected | SNP1, SNP2)",
+                        labels = function(x) sprintf("%.3f", x),
+                        breaks = scales::breaks_pretty(n = 3)) +
+    labs(x = "SNP1 dosage (0/1/2 coded alleles)",
+         y = "SNP2 dosage (0/1/2 coded alleles)") +
+    theme_minimal(base_size = 13) +
+    theme(panel.grid = element_blank(), legend.position = "bottom",
+          legend.key.width = unit(1.4, "cm"))
 }
 
 # HTML summary of the two correlations, colour-matched to the plot legend,
@@ -226,27 +256,67 @@ simulate_disease_pool <- function(pool_size, maf1, maf2, seed) {
   )
 }
 
-# Attach a liability column, given each SNP's target R^2 on the liability
-# scale and effect direction (dir_i = +1 risk-increasing, -1 risk-decreasing
-# per copy of the coded/"risk" allele). If r2_1 + r2_2 would leave no
-# residual variance, they're rescaled down proportionally so the liability
-# keeps unit variance.
-add_liability <- function(pool, maf1, maf2, r2_1, r2_2, dir1 = 1, dir2 = 1) {
+# Shared liability-model parameters, given each SNP's target R^2 on the
+# liability scale and effect direction (dir_i = +1 risk-increasing, -1
+# risk-decreasing per copy of the coded/"risk" allele). If r2_1 + r2_2 would
+# leave no residual variance, they're rescaled down proportionally so the
+# liability keeps unit variance. Used both to simulate a pool's liability
+# (add_liability()) and to compute exact per-genotype case probabilities
+# analytically (case_prob_grid()) without needing to simulate.
+liability_params <- function(maf1, maf2, r2_1, r2_2, dir1 = 1, dir2 = 1) {
   total <- r2_1 + r2_2
   if (total > 0.98) {
     scale <- 0.98 / total
     r2_1 <- r2_1 * scale
     r2_2 <- r2_2 * scale
   }
-  beta1 <- dir1 * sqrt(r2_1)
-  beta2 <- dir2 * sqrt(r2_2)
-  resid_sd <- sqrt(max(1 - r2_1 - r2_2, 0.001))
-  mu1 <- 2 * maf1; sd1 <- sqrt(2 * maf1 * (1 - maf1))
-  mu2 <- 2 * maf2; sd2 <- sqrt(2 * maf2 * (1 - maf2))
-  g1_std <- (pool$x - mu1) / sd1
-  g2_std <- (pool$y - mu2) / sd2
-  pool$liability <- beta1 * g1_std + beta2 * g2_std + resid_sd * pool$e
+  list(
+    beta1 = dir1 * sqrt(r2_1),
+    beta2 = dir2 * sqrt(r2_2),
+    resid_sd = sqrt(max(1 - r2_1 - r2_2, 0.001)),
+    mu1 = 2 * maf1, sd1 = sqrt(2 * maf1 * (1 - maf1)),
+    mu2 = 2 * maf2, sd2 = sqrt(2 * maf2 * (1 - maf2))
+  )
+}
+
+# Attach a liability column to a simulated genotype pool.
+add_liability <- function(pool, maf1, maf2, r2_1, r2_2, dir1 = 1, dir2 = 1) {
+  p <- liability_params(maf1, maf2, r2_1, r2_2, dir1, dir2)
+  g1_std <- (pool$x - p$mu1) / p$sd1
+  g2_std <- (pool$y - p$mu2) / p$sd2
+  pool$liability <- p$beta1 * g1_std + p$beta2 * g2_std + p$resid_sd * pool$e
   pool
+}
+
+# Exact P(case | SNP1 = g1, SNP2 = g2) for all 9 genotype combinations,
+# computed analytically from the liability-threshold model (no simulation
+# needed): liability | genotype ~ N(beta1*g1_std + beta2*g2_std, resid_sd^2),
+# so P(case | g1, g2) = P(liability > t) has a closed form via pnorm().
+case_prob_grid <- function(maf1, maf2, r2_1, r2_2, dir1, dir2, K) {
+  p <- liability_params(maf1, maf2, r2_1, r2_2, dir1, dir2)
+  t <- -qnorm(K)
+  grid <- expand.grid(x = 0:2, y = 0:2)
+  g1_std <- (grid$x - p$mu1) / p$sd1
+  g2_std <- (grid$y - p$mu2) / p$sd2
+  mean_liab <- p$beta1 * g1_std + p$beta2 * g2_std
+  grid$p_case <- pnorm((mean_liab - t) / p$resid_sd)
+  grid
+}
+
+# Turn per-genotype case probabilities into P(selected | SNP1, SNP2): the
+# probability that an individual with that genotype ends up in the
+# ascertained sample (red group), given the actual case/control sampling
+# fractions achieved in build_snp_stats() (n_cases/n_controls out of the
+# total cases/controls available in the pool). This correctly goes flat
+# (same value in every cell) when P = K (no ascertainment), matching the
+# scatter plot showing no induced correlation in that case.
+selection_prob_grid <- function(case_grid, n_cases, n_controls,
+                                 total_cases_pool, total_controls_pool) {
+  p_sel_case <- if (total_cases_pool > 0) n_cases / total_cases_pool else 0
+  p_sel_control <- if (total_controls_pool > 0) n_controls / total_controls_pool else 0
+  case_grid$p_selected <- case_grid$p_case * p_sel_case +
+    (1 - case_grid$p_case) * p_sel_control
+  case_grid
 }
 
 # Build the two groups shown in the plot:
@@ -283,7 +353,9 @@ build_snp_stats <- function(pool, n, K, P) {
     pop_fit = fit_line(pop_df),
     sel_fit = fit_line(sel_df),
     n_cases = n_cases,
-    n_controls = n_controls
+    n_controls = n_controls,
+    total_cases_pool = nrow(cases_pool),
+    total_controls_pool = nrow(controls_pool)
   )
 }
 
@@ -405,7 +477,23 @@ snp_tab <- tabPanel(
       actionButton("resample_snp", "Draw new random sample")
     ),
     mainPanel(
-      plotOutput("plot_snp", height = "550px"),
+      tabsetPanel(
+        tabPanel("Heatmap",
+          plotOutput("heatmap_snp", height = "500px"),
+          div(style = "margin-top: 10px; font-size: 13px; color: #555;", paste(
+            "Each cell is P(selected | SNP1, SNP2): the probability that an",
+            "individual with that genotype combination ends up in the",
+            "selected/ascertained sample (red group), computed analytically",
+            "from the liability-threshold model. When P = K (no",
+            "ascertainment) every cell is equal; as P moves away from K,",
+            "banding appears - this pattern is what the SNP1-SNP2",
+            "correlation in the selected sample (below) is summarizing."
+          ))
+        ),
+        tabPanel("Scatter",
+          plotOutput("plot_snp", height = "550px")
+        )
+      ),
       div(style = "margin-top: 10px; font-size: 14px;", htmlOutput("stats_snp")),
       div(style = "margin-top: 6px; font-size: 13px; color: #555;", htmlOutput("r2_snp"))
     )
@@ -452,6 +540,18 @@ server <- function(input, output, session) {
     build_snp_stats(snp_pool_liab(), input$n_snp, input$K_snp, input$P_snp)
   })
 
+  # Analytical P(selected | SNP1, SNP2) grid for the heatmap tab; reuses the
+  # achieved n_cases/n_controls and pool totals from stats_snp() so the
+  # heatmap's ascertainment matches the scatter's exactly.
+  heatmap_grid_snp <- reactive({
+    stats <- stats_snp()
+    grid <- case_prob_grid(input$maf1, input$maf2, input$r2_1, input$r2_2,
+                            as.numeric(input$dir1), as.numeric(input$dir2),
+                            input$K_snp)
+    selection_prob_grid(grid, stats$n_cases, stats$n_controls,
+                         stats$total_cases_pool, stats$total_controls_pool)
+  })
+
   output$plot_cont <- renderPlot({
     make_plot(stats_cont(), jitter = FALSE, xlab = "Variable X", ylab = "Variable Y")
   }, width = 800, height = 550)
@@ -465,6 +565,10 @@ server <- function(input, output, session) {
               xlab = "SNP1 dosage (0/1/2 coded alleles)",
               ylab = "SNP2 dosage (0/1/2 coded alleles)")
   }, width = 800, height = 550)
+
+  output$heatmap_snp <- renderPlot({
+    make_heatmap_plot(heatmap_grid_snp())
+  }, width = 550, height = 500)
 
   output$stats_snp <- renderUI({
     stats <- stats_snp()
