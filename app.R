@@ -54,9 +54,10 @@ fmt_p <- function(fit) {
 
 COLS <- c("Not selected" = "grey70", "Selected" = "#D7191C")
 
-# Sequential blue ramp (light -> dark) used for the SNP heatmap's fill scale.
-HEATMAP_LOW <- "#cde2fb"
-HEATMAP_HIGH <- "#0d366b"
+# Sequential red ramp (light -> dark) for the SNP heatmap's fill scale,
+# matching the "Selected" red used for that group in the scatter plot.
+HEATMAP_LOW <- "#fbe3e2"
+HEATMAP_HIGH <- unname(COLS["Selected"])
 
 # Build the scatter + two regression lines (population vs. selected).
 # `jitter` is used for the SNP tab where x/y only take values 0/1/2.
@@ -102,11 +103,11 @@ make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
   p
 }
 
-# 3x3 heatmap of P(selected | SNP1, SNP2): how likely an individual with a
-# given genotype combination is to end up in the ascertained sample (red
-# group in the scatter), rather than a scatter of jittered points. Small,
-# fixed number of cells (genotypes only take 0/1/2), so every cell gets a
-# direct label instead of relying on the fill legend alone.
+# 3x3 heatmap of P(SNP1, SNP2 | selected): the genotype composition of the
+# ascertained sample (red group in the scatter), rather than a scatter of
+# jittered points. Small, fixed number of cells (genotypes only take
+# 0/1/2), so every cell gets a direct label instead of relying on the fill
+# legend alone.
 make_heatmap_plot <- function(grid) {
   rng <- range(grid$p_selected)
   mid <- mean(rng)
@@ -118,7 +119,7 @@ make_heatmap_plot <- function(grid) {
               size = 5.5, fontface = "bold", show.legend = FALSE) +
     scale_colour_identity() +
     scale_fill_gradient(low = HEATMAP_LOW, high = HEATMAP_HIGH,
-                        name = "P(selected | SNP1, SNP2)",
+                        name = "P(SNP1, SNP2 | selected)",
                         labels = function(x) sprintf("%.3f", x),
                         breaks = scales::breaks_pretty(n = 3)) +
     labs(x = "SNP1 dosage (0/1/2 coded alleles)",
@@ -303,19 +304,27 @@ case_prob_grid <- function(maf1, maf2, r2_1, r2_2, dir1, dir2, K) {
   grid
 }
 
-# Turn per-genotype case probabilities into P(selected | SNP1, SNP2): the
-# probability that an individual with that genotype ends up in the
-# ascertained sample (red group), given the actual case/control sampling
-# fractions achieved in build_snp_stats() (n_cases/n_controls out of the
-# total cases/controls available in the pool). This correctly goes flat
-# (same value in every cell) when P = K (no ascertainment), matching the
-# scatter plot showing no induced correlation in that case.
-selection_prob_grid <- function(case_grid, n_cases, n_controls,
-                                 total_cases_pool, total_controls_pool) {
-  p_sel_case <- if (total_cases_pool > 0) n_cases / total_cases_pool else 0
-  p_sel_control <- if (total_controls_pool > 0) n_controls / total_controls_pool else 0
-  case_grid$p_selected <- case_grid$p_case * p_sel_case +
-    (1 - case_grid$p_case) * p_sel_control
+# Turn per-genotype case probabilities into P(SNP1, SNP2 | selected): the
+# fraction of the ascertained sample (red group) expected to have each
+# genotype combination. Each genotype's population frequency is the product
+# of independent per-SNP Hardy-Weinberg binomial probabilities (the two SNPs
+# have no LD), combined with its case probability via Bayes' rule, then
+# mixed in the actual case:control ratio achieved in build_snp_stats(). When
+# P = K this reduces to the independent population product
+# P(SNP1)*P(SNP2); as P moves away from K, it skews toward genotypes that
+# are over/under-represented among cases - this skew is what induces the
+# spurious SNP1-SNP2 correlation in the selected sample.
+genotype_selected_grid <- function(case_grid, maf1, maf2, n_cases, n_controls) {
+  case_grid$p_g <- dbinom(case_grid$x, 2, maf1) * dbinom(case_grid$y, 2, maf2)
+  p_case_marg <- sum(case_grid$p_g * case_grid$p_case)
+  p_control_marg <- 1 - p_case_marg
+  p_g_given_case <- if (p_case_marg > 0) case_grid$p_g * case_grid$p_case / p_case_marg else 0
+  p_g_given_control <- if (p_control_marg > 0)
+    case_grid$p_g * (1 - case_grid$p_case) / p_control_marg else 0
+  n_total <- n_cases + n_controls
+  w_case <- if (n_total > 0) n_cases / n_total else 0
+  w_control <- if (n_total > 0) n_controls / n_total else 0
+  case_grid$p_selected <- w_case * p_g_given_case + w_control * p_g_given_control
   case_grid
 }
 
@@ -353,9 +362,7 @@ build_snp_stats <- function(pool, n, K, P) {
     pop_fit = fit_line(pop_df),
     sel_fit = fit_line(sel_df),
     n_cases = n_cases,
-    n_controls = n_controls,
-    total_cases_pool = nrow(cases_pool),
-    total_controls_pool = nrow(controls_pool)
+    n_controls = n_controls
   )
 }
 
@@ -481,13 +488,15 @@ snp_tab <- tabPanel(
         tabPanel("Heatmap",
           plotOutput("heatmap_snp", height = "500px"),
           div(style = "margin-top: 10px; font-size: 13px; color: #555;", paste(
-            "Each cell is P(selected | SNP1, SNP2): the probability that an",
-            "individual with that genotype combination ends up in the",
-            "selected/ascertained sample (red group), computed analytically",
-            "from the liability-threshold model. When P = K (no",
-            "ascertainment) every cell is equal; as P moves away from K,",
-            "banding appears - this pattern is what the SNP1-SNP2",
-            "correlation in the selected sample (below) is summarizing."
+            "Each cell is P(SNP1, SNP2 | selected): the fraction of the",
+            "selected/ascertained sample (red group) expected to have that",
+            "genotype combination, computed analytically from the",
+            "population's Hardy-Weinberg genotype frequencies and the",
+            "liability-threshold model. When P = K (no ascertainment) this",
+            "matches the independent population frequencies; as P moves",
+            "away from K, it skews toward genotypes over/under-represented",
+            "among cases - this skew is what the SNP1-SNP2 correlation in",
+            "the selected sample (below) is summarizing."
           ))
         ),
         tabPanel("Scatter",
@@ -540,16 +549,16 @@ server <- function(input, output, session) {
     build_snp_stats(snp_pool_liab(), input$n_snp, input$K_snp, input$P_snp)
   })
 
-  # Analytical P(selected | SNP1, SNP2) grid for the heatmap tab; reuses the
-  # achieved n_cases/n_controls and pool totals from stats_snp() so the
-  # heatmap's ascertainment matches the scatter's exactly.
+  # Analytical P(SNP1, SNP2 | selected) grid for the heatmap tab; reuses the
+  # achieved n_cases/n_controls from stats_snp() so the heatmap's
+  # case:control mix matches the scatter's exactly.
   heatmap_grid_snp <- reactive({
     stats <- stats_snp()
     grid <- case_prob_grid(input$maf1, input$maf2, input$r2_1, input$r2_2,
                             as.numeric(input$dir1), as.numeric(input$dir2),
                             input$K_snp)
-    selection_prob_grid(grid, stats$n_cases, stats$n_controls,
-                         stats$total_cases_pool, stats$total_controls_pool)
+    genotype_selected_grid(grid, input$maf1, input$maf2,
+                            stats$n_cases, stats$n_controls)
   })
 
   output$plot_cont <- renderPlot({
