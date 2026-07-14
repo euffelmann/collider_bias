@@ -289,37 +289,13 @@ add_liability <- function(pool, maf1, maf2, r2_1, r2_2, dir1 = 1, dir2 = 1) {
   pool
 }
 
-# The disease threshold t such that P(liability > t) = K exactly, solved
-# numerically against the *actual* mixture distribution induced by the two
-# discrete genotypes (9 cells, each ~N(mean_liab_cell, resid_sd^2)) rather
-# than assumed via t = -qnorm(K), which is only valid if liability is
-# marginally Gaussian. That assumption holds well for small per-SNP R^2
-# (many-SNP/infinitesimal regime, Gaussian by CLT) but breaks down once one
-# or two SNPs explain a large share of liability variance: the marginal
-# distribution is then a mixture of near-degenerate spikes, and -qnorm(K)
-# can silently realize a case rate far from the nominal K - which in turn
-# means a "no ascertainment" P = K sample is actually still ascertained
-# relative to the true population rate, producing spurious SNP1-SNP2
-# correlation even when the sliders claim there should be none.
-solve_liability_threshold <- function(maf1, maf2, r2_1, r2_2, dir1, dir2, K) {
-  p <- liability_params(maf1, maf2, r2_1, r2_2, dir1, dir2)
-  grid <- expand.grid(x = 0:2, y = 0:2)
-  p_g <- dbinom(grid$x, 2, maf1) * dbinom(grid$y, 2, maf2)
-  g1_std <- (grid$x - p$mu1) / p$sd1
-  g2_std <- (grid$y - p$mu2) / p$sd2
-  mean_liab <- p$beta1 * g1_std + p$beta2 * g2_std
-
-  case_rate <- function(t) sum(p_g * pnorm((mean_liab - t) / p$resid_sd)) - K
-  uniroot(case_rate, interval = c(-15, 15))$root
-}
-
 # Exact P(case | SNP1 = g1, SNP2 = g2) for all 9 genotype combinations,
 # computed analytically from the liability-threshold model (no simulation
 # needed): liability | genotype ~ N(beta1*g1_std + beta2*g2_std, resid_sd^2),
-# so P(case | g1, g2) = P(liability > t) has a closed form via pnorm(). `t`
-# is the exact threshold from solve_liability_threshold(), not -qnorm(K).
-case_prob_grid <- function(maf1, maf2, r2_1, r2_2, dir1, dir2, t) {
+# so P(case | g1, g2) = P(liability > t) has a closed form via pnorm().
+case_prob_grid <- function(maf1, maf2, r2_1, r2_2, dir1, dir2, K) {
   p <- liability_params(maf1, maf2, r2_1, r2_2, dir1, dir2)
+  t <- -qnorm(K)
   grid <- expand.grid(x = 0:2, y = 0:2)
   g1_std <- (grid$x - p$mu1) / p$sd1
   g2_std <- (grid$y - p$mu2) / p$sd2
@@ -358,11 +334,9 @@ genotype_selected_grid <- function(case_grid, maf1, maf2, n_cases, n_controls) {
 #   - "Selected": a case-control sample of n individuals ascertained to a
 #     target case fraction P (the "sample prevalence"). P = K reproduces
 #     the population (no selection); P towards 1 approaches a cases-only
-#     sample (maximal selection on case status). `t` is the exact disease
-#     threshold from solve_liability_threshold(), so the case/control split
-#     reflects the pool's true realized prevalence, not a Gaussian
-#     approximation of it.
-build_snp_stats <- function(pool, n, t, P) {
+#     sample (maximal selection on case status).
+build_snp_stats <- function(pool, n, K, P) {
+  t <- -qnorm(K)
   pool$case <- pool$liability > t
 
   pop_df <- pool[seq_len(min(n, nrow(pool))), c("x", "y")]
@@ -583,17 +557,8 @@ server <- function(input, output, session) {
                   as.numeric(input$dir1), as.numeric(input$dir2))
   })
 
-  # Exact disease threshold for the current MAF/R^2/K settings (see
-  # solve_liability_threshold()); shared by the scatter sim and the heatmap
-  # grid so both always agree on what "case" means.
-  t_snp <- reactive({
-    solve_liability_threshold(input$maf1, input$maf2, input$r2_1, input$r2_2,
-                               as.numeric(input$dir1), as.numeric(input$dir2),
-                               input$K_snp)
-  })
-
   stats_snp <- reactive({
-    build_snp_stats(snp_pool_liab(), input$n_snp, t_snp(), input$P_snp)
+    build_snp_stats(snp_pool_liab(), input$n_snp, input$K_snp, input$P_snp)
   })
 
   # Analytical P(SNP1, SNP2 | selected) grid for the heatmap tab; reuses the
@@ -603,7 +568,7 @@ server <- function(input, output, session) {
     stats <- stats_snp()
     grid <- case_prob_grid(input$maf1, input$maf2, input$r2_1, input$r2_2,
                             as.numeric(input$dir1), as.numeric(input$dir2),
-                            t_snp())
+                            input$K_snp)
     genotype_selected_grid(grid, input$maf1, input$maf2,
                             stats$n_cases, stats$n_controls)
   })
