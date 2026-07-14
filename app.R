@@ -87,6 +87,14 @@ make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
     theme_minimal(base_size = 13) +
     theme(legend.position = "bottom")
 
+  # SNP dosages only ever take the values 0/1/2, so label the axes
+  # accordingly instead of ggplot's default continuous breaks.
+  if (jitter) {
+    p <- p +
+      scale_x_continuous(breaks = 0:2) +
+      scale_y_continuous(breaks = 0:2)
+  }
+
   p
 }
 
