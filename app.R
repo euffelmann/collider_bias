@@ -63,7 +63,8 @@ HEATMAP_HIGH <- unname(COLS["Selected"])
 # `jitter` is used for the SNP tab where x/y only take values 0/1/2.
 # `df$group` must be a 2-level factor; the 2nd level is drawn in red.
 make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
-                       cols = COLS, legend_title = "Selection status") {
+                       cols = COLS, legend_title = "Selection status",
+                       caption = NULL) {
   df <- stats$df
   pop_fit <- stats$pop_fit
   sel_fit <- stats$sel_fit
@@ -88,9 +89,10 @@ make_plot <- function(stats, jitter = FALSE, xlab = "X", ylab = "Y",
                   colour = sel_colour, linewidth = 1.1)
      else NULL) +
     scale_colour_manual(values = cols, name = legend_title, drop = FALSE) +
-    labs(x = xlab, y = ylab) +
+    labs(x = xlab, y = ylab, caption = caption) +
     theme_minimal(base_size = 13) +
-    theme(legend.position = "bottom")
+    theme(legend.position = "bottom",
+          plot.caption = element_text(hjust = 0, size = 11, colour = "grey30"))
 
   # SNP dosages only ever take the values 0/1/2, so label the axes
   # accordingly instead of ggplot's default continuous breaks.
@@ -574,7 +576,8 @@ server <- function(input, output, session) {
   })
 
   output$plot_cont <- renderPlot({
-    make_plot(stats_cont(), jitter = FALSE, xlab = "Athleticism", ylab = "Intelligence")
+    make_plot(stats_cont(), jitter = FALSE, xlab = "Variable X", ylab = "Variable Y",
+              caption = "e.g. Variable X = Athleticism, Variable Y = Intelligence")
   }, width = 800, height = 550)
 
   output$stats_cont <- renderUI({
